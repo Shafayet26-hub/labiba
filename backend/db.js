@@ -9,9 +9,10 @@ const dbPath = path.resolve(__dirname, 'users.db');
 
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
-    console.error('Error connecting to database', err);
+    console.error('CRITICAL: Error connecting to SQLite database:', err);
+    process.exit(1); // Exit if DB connection fails
   } else {
-    console.log('Connected to SQLite database');
+    console.log('Successfully connected to SQLite database at:', dbPath);
     db.run(
       `CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
