@@ -1,6 +1,6 @@
 [build]
-  base = "."
-  command = "npm install && npm run build"
+  base = "forntend"
+  command = "npm run build"
   publish = "dist"
 
 [[redirects]]
