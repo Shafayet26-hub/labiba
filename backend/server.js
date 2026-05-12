@@ -27,6 +27,11 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Root Route / Health Check
+app.get('/', (req, res) => {
+  res.json({ message: 'Aura Backend API is active.', status: 'healthy' });
+});
+
 // Signup Endpoint
 app.post('/api/signup', async (req, res) => {
   const { name, email, password } = req.body;
