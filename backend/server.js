@@ -102,7 +102,7 @@ app.post('/api/login', (req, res) => {
   });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Backend server running on http://0.0.0.0:${PORT}`);
+app.listen(PORT, () => {
+  console.log(`Backend server running on port ${PORT}`);
   console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
 });
