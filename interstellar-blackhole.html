@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Interstellar Black Hole</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#000;overflow:hidden;width:100vw;height:100vh}
+  canvas{display:block;width:100%!important;height:100%!important}
+  #label{
+    position:absolute;bottom:2rem;left:50%;transform:translateX(-50%);
+    font-family:'Courier New',monospace;font-size:0.65rem;letter-spacing:0.25em;
+    color:rgba(180,140,80,0.5);text-transform:uppercase;pointer-events:none;
+    text-shadow:0 0 12px rgba(255,160,60,0.3);
+  }
+</style>
+</head>
+<body>
+
+<div id="label">Gargantua &mdash; M87 &nbsp;|&nbsp; Event Horizon</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ─── RENDERER ────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.body.prepend(renderer.domElement);
+
+// ─── SCENE / CAMERA ──────────────────────────────────────────────────────────
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.01, 500);
+camera.position.set(0, 3.2, 9);
+camera.lookAt(0, 0, 0);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping  = true;
+controls.dampingFactor  = 0.04;
+controls.minDistance    = 4;
+controls.maxDistance    = 30;
+controls.enablePan      = false;
+
+// ─── STARFIELD ───────────────────────────────────────────────────────────────
+{
+  const geo = new THREE.BufferGeometry();
+  const pos = [];
+  for (let i = 0; i < 14000; i++) {
+    const r   = 80 + Math.random() * 120;
+    const t   = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    pos.push(r*Math.sin(phi)*Math.cos(t), r*Math.sin(phi)*Math.sin(t), r*Math.cos(phi));
+  }
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+
+  // vary star sizes
+  const sizes = new Float32Array(14000);
+  for (let i = 0; i < 14000; i++) sizes[i] = Math.random();
+  geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+  const starMat = new THREE.ShaderMaterial({
+    vertexShader: `
+      attribute float size;
+      varying float vSize;
+      void main(){
+        vSize = size;
+        gl_PointSize = 0.8 + size * 2.2;
+        gl_Position  = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+      }
+    `,
+    fragmentShader: `
+      varying float vSize;
+      void main(){
+        vec2 uv = gl_PointCoord - 0.5;
+        float d = length(uv);
+        if(d > 0.5) discard;
+        float a = smoothstep(0.5, 0.0, d);
+        vec3 col = mix(vec3(0.7,0.8,1.0), vec3(1.0,0.95,0.8), vSize);
+        gl_FragColor = vec4(col, a * (0.4 + vSize * 0.6));
+      }
+    `,
+    transparent: true,
+    depthWrite:  false,
+    blending:    THREE.AdditiveBlending,
+  });
+  scene.add(new THREE.Points(geo, starMat));
+}
+
+// ─── GLSL HELPERS ────────────────────────────────────────────────────────────
+const NOISE_GLSL = `
+float h21(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float h31(vec3 p){
+  p=fract(p*vec3(0.1031,0.1030,0.0973));
+  p+=dot(p,p.yxz+33.33);
+  return fract((p.x+p.y)*p.z);
+}
+float n2(vec2 p){
+  vec2 i=floor(p),f=fract(p);
+  f=f*f*(3.0-2.0*f);
+  return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),
+             mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x),f.y);
+}
+float n3(vec3 p){
+  vec3 i=floor(p),f=fract(p);
+  f=f*f*(3.0-2.0*f);
+  return mix(
+    mix(mix(h31(i),h31(i+vec3(1,0,0)),f.x),mix(h31(i+vec3(0,1,0)),h31(i+vec3(1,1,0)),f.x),f.y),
+    mix(mix(h31(i+vec3(0,0,1)),h31(i+vec3(1,0,1)),f.x),mix(h31(i+vec3(0,1,1)),h31(i+vec3(1,1,1)),f.x),f.y),
+    f.z);
+}
+float fbm2(vec2 p){
+  float v=0.0,a=0.5;
+  for(int i=0;i<6;i++){v+=a*n2(p);p=p*2.0+vec2(100.0);a*=0.5;}
+  return v;
+}
+float fbm3(vec3 p){
+  float v=0.0,a=0.5;
+  vec3 sh=vec3(100.0);
+  for(int i=0;i<6;i++){v+=a*n3(p);p=p*2.0+sh;a*=0.5;}
+  return v;
+}
+`;
+
+// ─── ACCRETION DISK (FLAT QUAD — SHADER-DRIVEN) ───────────────────────────────
+const diskVert = `
+  varying vec2 vUv;
+  void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }
+`;
+
+const diskFrag = `
+precision highp float;
+uniform float uTime;
+varying vec2 vUv;
+
+${NOISE_GLSL}
+
+void main(){
+  vec2 uv = vUv - 0.5;
+  float r  = length(uv);
+  float a  = atan(uv.y, uv.x);
+
+  float rInner = 0.115;
+  float rOuter = 0.48;
+
+  // pure black inside event horizon
+  if(r < rInner){ gl_FragColor=vec4(0.0,0.0,0.0,1.0); return; }
+
+  // mask to disk band
+  float mask = smoothstep(rInner, rInner+0.018, r) * smoothstep(rOuter, rOuter-0.04, r);
+  if(mask < 0.001){ gl_FragColor=vec4(0.0,0.0,0.0,0.0); return; }
+
+  // ── FBM turbulence for disk texture ──
+  float rot  = uTime * 0.38;
+  float spin = a - rot - r * 10.0;   // differential rotation: inner spins faster
+  vec2  swirl = vec2(spin * 1.2, r * 6.0 - uTime * 0.6);
+  float turb  = fbm2(swirl * 3.0);
+  float turb2 = fbm2(swirl * 6.0 + 5.3);
+
+  // ── Doppler shift: approaching side (left) brighter, receding (right) dimmer ──
+  // In Interstellar the disk is inclined; left side brightens due to beaming
+  float doppler = pow(1.0 + 0.6 * sin(a + uTime * 0.05), 2.5);   // relativistic beaming
+  doppler = clamp(doppler, 0.05, 4.0);
+
+  // ── radial colour temperature ──
+  // deep inner: white-hot, mid: orange, outer: dim red-brown
+  float t = (r - rInner) / (rOuter - rInner);   // 0 inner → 1 outer
+  vec3 cHot   = vec3(1.00, 0.97, 0.88);
+  vec3 cMid   = vec3(1.00, 0.62, 0.12);
+  vec3 cEdge  = vec3(0.55, 0.18, 0.03);
+  vec3 cFar   = vec3(0.18, 0.05, 0.01);
+
+  vec3 diskCol = mix(cHot,  cMid,  smoothstep(0.0, 0.25, t));
+       diskCol = mix(diskCol, cEdge, smoothstep(0.2, 0.75, t));
+       diskCol = mix(diskCol, cFar,  smoothstep(0.6, 1.0,  t));
+
+  // ── brightness from turbulence + doppler ──
+  float bright = (0.45 + 0.55 * turb) * (0.5 + 0.5 * turb2) * doppler;
+  diskCol *= bright * 2.8;
+
+  // ── photon ring: super-thin brilliant arc just outside horizon ──
+  float prR    = rInner + 0.028;
+  float pRing  = exp(-pow((r - prR) * 55.0, 2.0)) * 4.5;
+  diskCol     += vec3(1.0, 0.92, 0.75) * pRing;
+
+  // ── lensed secondary image above the disk (Einstein ring arc) ──
+  float secR   = rInner + 0.06;
+  float secRing = exp(-pow((r - secR) * 32.0, 2.0)) * 0.8;
+  diskCol     += vec3(0.9, 0.7, 0.4) * secRing * (0.5 + 0.5 * sin(a * 3.0 + uTime));
+
+  // ── outer corona tendrils ──
+  float corona  = exp(-pow((r - rOuter * 1.15) * 6.0, 2.0)) * 0.3;
+  float cTurb   = fbm2(vec2(a * 2.0 + uTime * 0.2, r * 4.0));
+  diskCol      += cMid * corona * cTurb;
+
+  // tone map
+  diskCol = diskCol / (diskCol + vec3(1.0));
+  diskCol = pow(diskCol, vec3(0.88));
+
+  gl_FragColor = vec4(diskCol, mask);
+}
+`;
+
+const diskMat = new THREE.ShaderMaterial({
+  vertexShader:   diskVert,
+  fragmentShader: diskFrag,
+  uniforms: { uTime: { value: 0 } },
+  transparent: true,
+  depthWrite:  false,
+  side:        THREE.DoubleSide,
+  blending:    THREE.NormalBlending,
+});
+
+const diskMesh = new THREE.Mesh(new THREE.PlaneGeometry(9.6, 9.6, 1, 1), diskMat);
+diskMesh.rotation.x = -Math.PI * 0.30;   // Interstellar tilt ~17°
+scene.add(diskMesh);
+
+// ─── EVENT HORIZON SPHERE (pure black + soft photon shell) ───────────────────
+// Black sphere
+const horizonMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+const horizonMesh = new THREE.Mesh(new THREE.SphereGeometry(1.09, 128, 128), horizonMat);
+scene.add(horizonMesh);
+
+// Photon shell glow (very thin additive layer)
+const photonVert = `
+  varying vec3 vNormal;
+  varying vec3 vView;
+  void main(){
+    vNormal = normalize(normalMatrix * normal);
+    vec4 mv  = modelViewMatrix * vec4(position,1.0);
+    vView    = normalize(-mv.xyz);
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+const photonFrag = `
+  precision highp float;
+  varying vec3 vNormal;
+  varying vec3 vView;
+  uniform float uTime;
+  void main(){
+    float fr = pow(1.0 - abs(dot(vNormal, vView)), 4.5);
+    float pulse = 0.9 + 0.1 * sin(uTime * 1.2);
+    vec3  col = mix(vec3(1.0,0.75,0.3), vec3(0.9,0.5,0.1), fr);
+    gl_FragColor = vec4(col * fr * pulse * 2.5, fr * 0.85);
+  }
+`;
+const photonMat = new THREE.ShaderMaterial({
+  vertexShader: photonVert, fragmentShader: photonFrag,
+  uniforms: { uTime: { value: 0 } },
+  transparent: true, depthWrite: false,
+  blending: THREE.AdditiveBlending, side: THREE.FrontSide,
+});
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.13, 64, 64), photonMat));
+
+// ─── GRAVITATIONAL LENSING WARP LAYER ────────────────────────────────────────
+// A larger transparent sphere that warps/distorts background — faked with a
+// screen-space rim shader that adds a hot orange-white ring far out
+const lensVert = `
+  varying vec3 vNormal;
+  varying vec3 vView;
+  void main(){
+    vNormal = normalize(normalMatrix * normal);
+    vec4 mv  = modelViewMatrix * vec4(position,1.0);
+    vView    = normalize(-mv.xyz);
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+const lensFrag = `
+  precision highp float;
+  varying vec3 vNormal;
+  varying vec3 vView;
+  uniform float uTime;
+  ${NOISE_GLSL}
+  void main(){
+    float fr  = pow(1.0 - abs(dot(vNormal, vView)), 3.0);
+    // thin bright ring only
+    float ring = exp(-pow((fr - 0.62) * 14.0, 2.0));
+    vec3 col   = mix(vec3(1.0,0.8,0.4), vec3(0.6,0.3,0.05), fr);
+    float noiseV = n3(vNormal * 4.0 + vec3(uTime * 0.1));
+    float alpha  = ring * (0.6 + 0.4 * noiseV) * 0.55;
+    gl_FragColor = vec4(col, alpha);
+  }
+`;
+const lensMat = new THREE.ShaderMaterial({
+  vertexShader: lensVert, fragmentShader: lensFrag,
+  uniforms: { uTime: { value: 0 } },
+  transparent: true, depthWrite: false,
+  blending: THREE.AdditiveBlending, side: THREE.BackSide,
+});
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(2.6, 64, 64), lensMat));
+
+// ─── OUTER ATMOSPHERE GLOW ────────────────────────────────────────────────────
+const atmoVert = `
+  varying vec3 vNormal;
+  varying vec3 vView;
+  void main(){
+    vNormal = normalize(normalMatrix * normal);
+    vec4 mv  = modelViewMatrix * vec4(position,1.0);
+    vView    = normalize(-mv.xyz);
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+const atmoFrag = `
+  precision highp float;
+  varying vec3 vNormal;
+  varying vec3 vView;
+  void main(){
+    float fr  = pow(1.0 - abs(dot(vNormal, vView)), 2.2);
+    vec3  col = mix(vec3(0.9,0.45,0.05), vec3(0.3,0.1,0.0), 1.0 - fr);
+    float alpha = fr * 0.22;
+    gl_FragColor = vec4(col, alpha);
+  }
+`;
+const atmoMat = new THREE.ShaderMaterial({
+  vertexShader: atmoVert, fragmentShader: atmoFrag,
+  transparent: true, depthWrite: false,
+  blending: THREE.AdditiveBlending, side: THREE.BackSide,
+});
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(3.8, 64, 64), atmoMat));
+
+// ─── RELATIVISTIC JETS ────────────────────────────────────────────────────────
+const jetVert = `
+  varying vec2 vUv;
+  void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }
+`;
+const jetFrag = `
+  precision mediump float;
+  varying vec2 vUv;
+  uniform float uTime;
+  uniform float uDir;
+  ${NOISE_GLSL}
+  void main(){
+    float x  = abs(vUv.x - 0.5) * 2.0;         // 0 centre → 1 edge
+    float y  = vUv.y;                             // 0 base → 1 tip
+    float fade = exp(-x * x * 90.0);             // tight column
+    float taper = 1.0 - y * 0.6;                 // tapers toward tip
+    float noiseV = n2(vec2(vUv.x * 8.0, y * 18.0 - uTime * 2.5 * uDir));
+    float pulse  = 0.55 + 0.45 * noiseV;
+    float alpha  = fade * taper * pulse * 0.5;
+    vec3 inner  = vec3(0.55, 0.75, 1.0);
+    vec3 outer  = vec3(0.15, 0.3,  0.7);
+    vec3 col    = mix(inner, outer, x);
+    gl_FragColor = vec4(col, alpha);
+  }
+`;
+
+[-1.0, 1.0].forEach(dir => {
+  const jetMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.22, 7.0),
+    new THREE.ShaderMaterial({
+      vertexShader: jetVert, fragmentShader: jetFrag,
+      uniforms: { uTime: { value: 0 }, uDir: { value: dir } },
+      transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    })
+  );
+  jetMesh.position.y = dir * 3.5;
+  jetMesh.userData.jet = true;
+  scene.add(jetMesh);
+});
+
+// ─── DUST / DEBRIS PARTICLES ─────────────────────────────────────────────────
+{
+  const geo  = new THREE.BufferGeometry();
+  const pos  = [];
+  const cols = [];
+  const N    = 4000;
+  for (let i = 0; i < N; i++) {
+    // ring of debris around the disk plane
+    const angle  = Math.random() * Math.PI * 2;
+    const radius = 1.3 + Math.random() * 3.2;
+    const height = (Math.random() - 0.5) * 0.4 * (1 - (radius - 1.3) / 3.2);
+    pos.push(
+      radius * Math.cos(angle),
+      height,
+      radius * Math.sin(angle)
+    );
+    // colour gradient: hot white inner → orange outer
+    const t = (radius - 1.3) / 3.2;
+    cols.push(1.0, 0.6 + 0.4 * (1 - t), 0.3 * (1 - t));
+  }
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos,  3));
+  geo.setAttribute('color',    new THREE.Float32BufferAttribute(cols, 3));
+
+  const mat = new THREE.PointsMaterial({
+    vertexColors: true,
+    size: 0.022,
+    transparent: true,
+    opacity: 0.55,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+
+  const debris = new THREE.Points(geo, mat);
+  debris.rotation.x = -Math.PI * 0.30;   // match disk tilt
+  debris.userData.debris = true;
+  scene.add(debris);
+}
+
+// ─── DISTANT GALAXY WISPS ─────────────────────────────────────────────────────
+{
+  const geo = new THREE.BufferGeometry();
+  const pos = [];
+  for (let i = 0; i < 800; i++) {
+    const t     = (i / 800) * Math.PI * 4;
+    const arm   = (i % 2) * Math.PI;
+    const r     = 12 + t * 2.8;
+    const x     = r * Math.cos(t + arm) + (Math.random() - 0.5) * 3;
+    const y     = (Math.random() - 0.5) * 1.5;
+    const z     = r * Math.sin(t + arm) + (Math.random() - 0.5) * 3;
+    pos.push(x, y, z);
+  }
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({
+    color: 0x8899cc, size: 0.12, transparent: true, opacity: 0.3,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  })));
+}
+
+// ─── RESIZE ──────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ─── ANIMATE ─────────────────────────────────────────────────────────────────
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+
+  // update uniforms
+  diskMat.uniforms.uTime.value   = t;
+  photonMat.uniforms.uTime.value = t;
+  lensMat.uniforms.uTime.value   = t;
+
+  scene.children.forEach(obj => {
+    if (obj.userData.jet    && obj.material.uniforms?.uTime) obj.material.uniforms.uTime.value = t;
+    if (obj.userData.debris) obj.rotation.y = t * 0.05;   // slow debris orbit
+  });
+
+  // gentle camera drift (auto orbit when idle)
+  camera.position.x = Math.sin(t * 0.055) * 0.6;
+  camera.position.y = 3.2 + Math.sin(t * 0.04) * 0.4;
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
