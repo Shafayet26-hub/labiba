@@ -20,16 +20,16 @@ const allowedOrigins = [
 console.log(`Allowed Origins: ${allowedOrigins.join(', ')}`);
 
 app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: '*',
   credentials: true,
 }));
 app.use(express.json());
+
+// Logging middleware
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url}`);
+  next();
+});
 
 // Root Route / Health Check
 app.get('/', (req, res) => {
@@ -47,6 +47,7 @@ app.post('/api/signup', async (req, res) => {
   // Check if user already exists
   db.get(`SELECT id FROM users WHERE email = ?`, [email], async (err, row) => {
     if (err) {
+      console.error('Signup DB Error (get):', err);
       return res.status(500).json({ error: 'Database error' });
     }
     if (row) {
